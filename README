@@ -1,3 +1,10 @@
+Hostapd with PPSK Support. 
+
+Using patches from https://patchwork.ozlabs.org/project/hostap/list/?series=266385&state=*
+
+This code support for multiple RADIUS Tunnel-* attributes
+
+
 wpa_supplicant and hostapd
 --------------------------
 
