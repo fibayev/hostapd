@@ -1,0 +1,42 @@
+diff --git a/src/ap/ieee802_11.c b/src/ap/ieee802_11.c
+index 71fbefc8e..7229011b7 100644
+--- a/src/ap/ieee802_11.c
++++ b/src/ap/ieee802_11.c
+@@ -2326,20 +2326,7 @@  ieee802_11_set_radius_info(struct hostapd_data *hapd, struct sta_info *sta,
+ 	char *identity = info->identity;
+ 	char *radius_cui = info->radius_cui;
+ 
+-	if (vlan_id->notempty &&
+-	    !hostapd_vlan_valid(hapd->conf->vlan, vlan_id)) {
+-		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_RADIUS,
+-			       HOSTAPD_LEVEL_INFO,
+-			       "Invalid VLAN %d%s received from RADIUS server",
+-			       vlan_id->untagged,
+-			       vlan_id->tagged[0] ? "+" : "");
+-		return -1;
+-	}
+-	if (ap_sta_set_vlan(hapd, sta, vlan_id) < 0)
+-		return -1;
+-	if (sta->vlan_id)
+-		hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_RADIUS,
+-			       HOSTAPD_LEVEL_INFO, "VLAN ID %d", sta->vlan_id);
++	sta->default_radius_vlan = *vlan_id;
+ 
+ 	hostapd_free_psk_list(sta->psk);
+ 	if (hapd->conf->wpa_psk_radius != PSK_RADIUS_IGNORED)
+diff --git a/src/ap/sta_info.h b/src/ap/sta_info.h
+index 27e72f9a0..fc165f5d5 100644
+--- a/src/ap/sta_info.h
++++ b/src/ap/sta_info.h
+@@ -200,8 +200,9 @@  struct sta_info {
+ 	int vlan_id; /* 0: none, >0: VID */
+ 	struct vlan_description *vlan_desc;
+ 	int vlan_id_bound; /* updated by ap_sta_bind_vlan() */
+-	 /* PSKs from RADIUS authentication server */
++	/* PSKs from RADIUS authentication server */
+ 	struct hostapd_sta_wpa_psk_short *psk;
++	struct vlan_description default_radius_vlan;
+ 
+ 	char *identity; /* User-Name from RADIUS */
+ 	char *radius_cui; /* Chargeable-User-Identity from RADIUS */
+

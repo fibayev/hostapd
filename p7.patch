@@ -1,0 +1,19 @@
+diff --git a/src/ap/ieee802_11.c b/src/ap/ieee802_11.c
+index 7229011b7..1c0b0c3d3 100644
+--- a/src/ap/ieee802_11.c
++++ b/src/ap/ieee802_11.c
+@@ -2321,12 +2321,11 @@  ieee802_11_set_radius_info(struct hostapd_data *hapd, struct sta_info *sta,
+ {
+ 	u32 session_timeout = info->session_timeout;
+ 	u32 acct_interim_interval = info->acct_interim_interval;
+-	struct vlan_description *vlan_id = &info->vlan_id;
+ 	struct hostapd_sta_wpa_psk_short *psk = info->psk;
+ 	char *identity = info->identity;
+ 	char *radius_cui = info->radius_cui;
+ 
+-	sta->default_radius_vlan = *vlan_id;
++	sta->default_radius_vlan = info->vlan_id;
+ 
+ 	hostapd_free_psk_list(sta->psk);
+ 	if (hapd->conf->wpa_psk_radius != PSK_RADIUS_IGNORED)
+

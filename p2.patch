@@ -1,0 +1,293 @@
+diff --git a/src/ap/ap_config.c b/src/ap/ap_config.c
+index 2e0af2b7e..8e887fabc 100644
+--- a/src/ap/ap_config.c
++++ b/src/ap/ap_config.c
+@@ -1094,15 +1094,28 @@  const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan, int vlan_id)
+ }
+ 
+ 
++static struct vlan_description vlan_desc_from_id(int vlan_id)
++{
++	struct vlan_description vlan_desc;
++
++	os_memset(&vlan_desc, 0, sizeof(vlan_desc));
++
++	vlan_desc.notempty = 1;
++	vlan_desc.untagged = vlan_id;
++
++	return vlan_desc;
++}
++
++
+ const u8 * hostapd_get_psk(const struct hostapd_bss_config *conf,
+ 			   const u8 *addr, const u8 *p2p_dev_addr,
+-			   const u8 *prev_psk, int *vlan_id)
++			   const u8 *prev_psk, struct vlan_description *vlan_desc)
+ {
+ 	struct hostapd_wpa_psk *psk;
+ 	int next_ok = prev_psk == NULL;
+ 
+-	if (vlan_id)
+-		*vlan_id = 0;
++	if (vlan_desc)
++		vlan_desc->notempty = 0;
+ 
+ 	if (p2p_dev_addr && !is_zero_ether_addr(p2p_dev_addr)) {
+ 		wpa_printf(MSG_DEBUG, "Searching a PSK for " MACSTR
+@@ -1122,8 +1135,8 @@  const u8 * hostapd_get_psk(const struct hostapd_bss_config *conf,
+ 		     (!addr && p2p_dev_addr &&
+ 		      os_memcmp(psk->p2p_dev_addr, p2p_dev_addr, ETH_ALEN) ==
+ 		      0))) {
+-			if (vlan_id)
+-				*vlan_id = psk->vlan_id;
++			if (vlan_desc)
++				*vlan_desc = vlan_desc_from_id(psk->vlan_id);
+ 			return psk->psk;
+ 		}
+ 
+diff --git a/src/ap/ap_config.h b/src/ap/ap_config.h
+index edd21516b..38dd77dc5 100644
+--- a/src/ap/ap_config.h
++++ b/src/ap/ap_config.h
+@@ -1175,7 +1175,8 @@  int hostapd_maclist_found(struct mac_acl_entry *list, int num_entries,
+ int hostapd_rate_found(int *list, int rate);
+ const u8 * hostapd_get_psk(const struct hostapd_bss_config *conf,
+ 			   const u8 *addr, const u8 *p2p_dev_addr,
+-			   const u8 *prev_psk, int *vlan_id);
++			   const u8 *prev_psk,
++			   struct vlan_description *vlan_desc);
+ int hostapd_setup_wpa_psk(struct hostapd_bss_config *conf);
+ int hostapd_vlan_valid(struct hostapd_vlan *vlan,
+ 		       struct vlan_description *vlan_desc);
+diff --git a/src/ap/wpa_auth.c b/src/ap/wpa_auth.c
+index 83805681e..a1bbecd1a 100644
+--- a/src/ap/wpa_auth.c
++++ b/src/ap/wpa_auth.c
+@@ -118,12 +118,12 @@  static inline const u8 * wpa_auth_get_psk(struct wpa_authenticator *wpa_auth,
+ 					  const u8 *addr,
+ 					  const u8 *p2p_dev_addr,
+ 					  const u8 *prev_psk, size_t *psk_len,
+-					  int *vlan_id)
++					  struct vlan_description *vlan_desc)
+ {
+ 	if (!wpa_auth->cb->get_psk)
+ 		return NULL;
+ 	return wpa_auth->cb->get_psk(wpa_auth->cb_ctx, addr, p2p_dev_addr,
+-				     prev_psk, psk_len, vlan_id);
++				     prev_psk, psk_len, vlan_desc);
+ }
+ 
+ 
+@@ -298,11 +298,12 @@  static int wpa_channel_info(struct wpa_authenticator *wpa_auth,
+ 
+ 
+ static int wpa_auth_update_vlan(struct wpa_authenticator *wpa_auth,
+-				const u8 *addr, int vlan_id)
++				const u8 *addr,
++				struct vlan_description *vlan_desc)
+ {
+ 	if (!wpa_auth->cb->update_vlan)
+ 		return -1;
+-	return wpa_auth->cb->update_vlan(wpa_auth->cb_ctx, addr, vlan_id);
++	return wpa_auth->cb->update_vlan(wpa_auth->cb_ctx, addr, vlan_desc);
+ }
+ 
+ 
+@@ -937,15 +938,16 @@  static int wpa_try_alt_snonce(struct wpa_state_machine *sm, u8 *data,
+ 	int ok = 0;
+ 	const u8 *pmk = NULL;
+ 	size_t pmk_len;
+-	int vlan_id = 0;
++	struct vlan_description vlan_desc;
+ 
++	os_memset(&vlan_desc, 0, sizeof(vlan_desc));
+ 	os_memset(&PTK, 0, sizeof(PTK));
+ 	for (;;) {
+ 		if (wpa_key_mgmt_wpa_psk(sm->wpa_key_mgmt) &&
+ 		    !wpa_key_mgmt_sae(sm->wpa_key_mgmt)) {
+ 			pmk = wpa_auth_get_psk(sm->wpa_auth, sm->addr,
+ 					       sm->p2p_dev_addr, pmk, &pmk_len,
+-					       &vlan_id);
++					       &vlan_desc);
+ 			if (!pmk)
+ 				break;
+ #ifdef CONFIG_IEEE80211R_AP
+@@ -988,8 +990,8 @@  static int wpa_try_alt_snonce(struct wpa_state_machine *sm, u8 *data,
+ 		   "WPA: Earlier SNonce resulted in matching MIC");
+ 	sm->alt_snonce_valid = 0;
+ 
+-	if (vlan_id && wpa_key_mgmt_wpa_psk(sm->wpa_key_mgmt) &&
+-	    wpa_auth_update_vlan(sm->wpa_auth, sm->addr, vlan_id) < 0)
++	if (vlan_desc.notempty && wpa_key_mgmt_wpa_psk(sm->wpa_key_mgmt) &&
++	    wpa_auth_update_vlan(sm->wpa_auth, sm->addr, &vlan_desc) < 0)
+ 		return -1;
+ 
+ 	os_memcpy(sm->SNonce, sm->alt_SNonce, WPA_NONCE_LEN);
+@@ -2938,9 +2940,11 @@  SM_STATE(WPA_PTK, PTKCALCNEGOTIATING)
+ 	struct ieee802_1x_hdr *hdr;
+ 	struct wpa_eapol_key *key;
+ 	struct wpa_eapol_ie_parse kde;
+-	int vlan_id = 0;
++	struct vlan_description vlan_desc;
+ 	int owe_ptk_workaround = !!wpa_auth->conf.owe_ptk_workaround;
+ 
++	os_memset(&vlan_desc, 0, sizeof(vlan_desc));
++
+ 	SM_ENTRY_MA(WPA_PTK, PTKCALCNEGOTIATING, wpa_ptk);
+ 	sm->EAPOLKeyReceived = false;
+ 	sm->update_snonce = false;
+@@ -2956,7 +2960,7 @@  SM_STATE(WPA_PTK, PTKCALCNEGOTIATING)
+ 		    !wpa_key_mgmt_sae(sm->wpa_key_mgmt)) {
+ 			pmk = wpa_auth_get_psk(sm->wpa_auth, sm->addr,
+ 					       sm->p2p_dev_addr, pmk, &pmk_len,
+-					       &vlan_id);
++					       &vlan_desc);
+ 			if (!pmk)
+ 				break;
+ 			psk_found = 1;
+@@ -3086,6 +3090,7 @@  SM_STATE(WPA_PTK, PTKCALCNEGOTIATING)
+ 				   WLAN_REASON_PREV_AUTH_NOT_VALID);
+ 		return;
+ 	}
++
+ #ifdef CONFIG_OCV
+ 	if (wpa_auth_uses_ocv(sm)) {
+ 		struct wpa_channel_info ci;
+@@ -3189,8 +3194,8 @@  SM_STATE(WPA_PTK, PTKCALCNEGOTIATING)
+ 	}
+ #endif /* CONFIG_IEEE80211R_AP */
+ 
+-	if (vlan_id && wpa_key_mgmt_wpa_psk(sm->wpa_key_mgmt) &&
+-	    wpa_auth_update_vlan(wpa_auth, sm->addr, vlan_id) < 0) {
++	if (vlan_desc.notempty && wpa_key_mgmt_wpa_psk(sm->wpa_key_mgmt) &&
++	    wpa_auth_update_vlan(wpa_auth, sm->addr, &vlan_desc) < 0) {
+ 		wpa_sta_disconnect(wpa_auth, sm->addr,
+ 				   WLAN_REASON_PREV_AUTH_NOT_VALID);
+ 		return;
+diff --git a/src/ap/wpa_auth.h b/src/ap/wpa_auth.h
+index fe47723b9..f7d1d3dbc 100644
+--- a/src/ap/wpa_auth.h
++++ b/src/ap/wpa_auth.h
+@@ -296,7 +296,7 @@  struct wpa_auth_callbacks {
+ 	int (*get_eapol)(void *ctx, const u8 *addr, wpa_eapol_variable var);
+ 	const u8 * (*get_psk)(void *ctx, const u8 *addr, const u8 *p2p_dev_addr,
+ 			      const u8 *prev_psk, size_t *psk_len,
+-			      int *vlan_id);
++			      struct vlan_description *vlan);
+ 	int (*get_msk)(void *ctx, const u8 *addr, u8 *msk, size_t *len);
+ 	int (*set_key)(void *ctx, int vlan_id, enum wpa_alg alg,
+ 		       const u8 *addr, int idx, u8 *key, size_t key_len,
+@@ -313,7 +313,8 @@  struct wpa_auth_callbacks {
+ 	int (*send_oui)(void *ctx, const u8 *dst, u8 oui_suffix, const u8 *data,
+ 			size_t data_len);
+ 	int (*channel_info)(void *ctx, struct wpa_channel_info *ci);
+-	int (*update_vlan)(void *ctx, const u8 *addr, int vlan_id);
++	int (*update_vlan)(void *ctx, const u8 *addr,
++			   struct vlan_description *vlan);
+ 	int (*get_sta_tx_params)(void *ctx, const u8 *addr,
+ 				 int ap_max_chanwidth, int ap_seg1_idx,
+ 				 int *bandwidth, int *seg1_idx);
+diff --git a/src/ap/wpa_auth_glue.c b/src/ap/wpa_auth_glue.c
+index 3e9921553..f0e94700c 100644
+--- a/src/ap/wpa_auth_glue.c
++++ b/src/ap/wpa_auth_glue.c
+@@ -330,14 +330,14 @@  static int hostapd_wpa_auth_get_eapol(void *ctx, const u8 *addr,
+ static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
+ 					   const u8 *p2p_dev_addr,
+ 					   const u8 *prev_psk, size_t *psk_len,
+-					   int *vlan_id)
++					   struct vlan_description *vlan_desc)
+ {
+ 	struct hostapd_data *hapd = ctx;
+ 	struct sta_info *sta = ap_get_sta(hapd, addr);
+ 	const u8 *psk;
+ 
+-	if (vlan_id)
+-		*vlan_id = 0;
++	if (vlan_desc)
++		vlan_desc->notempty = 0;
+ 	if (psk_len)
+ 		*psk_len = PMK_LEN;
+ 
+@@ -374,7 +374,7 @@  static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
+ #endif /* CONFIG_OWE */
+ 
+ 	psk = hostapd_get_psk(hapd->conf, addr, p2p_dev_addr, prev_psk,
+-			      vlan_id);
++			      vlan_desc);
+ 	/*
+ 	 * This is about to iterate over all psks, prev_psk gives the last
+ 	 * returned psk which should not be returned again.
+@@ -383,8 +383,8 @@  static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
+ 	if (sta && sta->psk && !psk) {
+ 		struct hostapd_sta_wpa_psk_short *pos;
+ 
+-		if (vlan_id)
+-			*vlan_id = 0;
++		if (vlan_desc)
++			vlan_desc->notempty = 0;
+ 		psk = sta->psk->psk;
+ 		for (pos = sta->psk; pos; pos = pos->next) {
+ 			if (pos->is_passphrase) {
+@@ -939,30 +939,30 @@  static void hostapd_clear_ptksa(void *ctx, const u8 *addr, int cipher)
+ #endif /* CONFIG_PASN */
+ 
+ 
+-static int hostapd_wpa_auth_update_vlan(void *ctx, const u8 *addr, int vlan_id)
++static int hostapd_wpa_auth_update_vlan(void *ctx, const u8 *addr,
++					struct vlan_description *vlan_desc)
+ {
+ #ifndef CONFIG_NO_VLAN
+ 	struct hostapd_data *hapd = ctx;
+ 	struct sta_info *sta;
++	int vlan_id = 0;
++
++	if (vlan_desc)
++		vlan_id = vlan_desc->untagged;
+ 
+ 	sta = ap_get_sta(hapd, addr);
+ 	if (!sta)
+ 		return -1;
+ 
+ 	if (!(hapd->iface->drv_flags & WPA_DRIVER_FLAGS_VLAN_OFFLOAD)) {
+-		struct vlan_description vlan_desc;
+-
+-		os_memset(&vlan_desc, 0, sizeof(vlan_desc));
+-		vlan_desc.notempty = 1;
+-		vlan_desc.untagged = vlan_id;
+-		if (!hostapd_vlan_valid(hapd->conf->vlan, &vlan_desc)) {
++		if (!hostapd_vlan_valid(hapd->conf->vlan, vlan_desc)) {
+ 			wpa_printf(MSG_INFO,
+ 				   "Invalid VLAN ID %d in wpa_psk_file",
+ 				   vlan_id);
+ 			return -1;
+ 		}
+ 
+-		if (ap_sta_set_vlan(hapd, sta, &vlan_desc) < 0) {
++		if (ap_sta_set_vlan(hapd, sta, vlan_desc) < 0) {
+ 			wpa_printf(MSG_INFO,
+ 				   "Failed to assign VLAN ID %d from wpa_psk_file to "
+ 				   MACSTR, vlan_id, MAC2STR(sta->addr));
+diff --git a/tests/fuzzing/eapol-key-auth/eapol-key-auth.c b/tests/fuzzing/eapol-key-auth/eapol-key-auth.c
+index bb46422c6..2a3aa8347 100644
+--- a/tests/fuzzing/eapol-key-auth/eapol-key-auth.c
++++ b/tests/fuzzing/eapol-key-auth/eapol-key-auth.c
+@@ -141,14 +141,14 @@  static int auth_send_eapol(void *ctx, const u8 *addr, const u8 *data,
+ 
+ static const u8 * auth_get_psk(void *ctx, const u8 *addr,
+ 			       const u8 *p2p_dev_addr, const u8 *prev_psk,
+-			       size_t *psk_len, int *vlan_id)
++			       size_t *psk_len, struct vlan_description *vlan_desc)
+ {
+ 	struct wpa *wpa = ctx;
+ 
+ 	wpa_printf(MSG_DEBUG, "AUTH: %s (addr=" MACSTR " prev_psk=%p)",
+ 		   __func__, MAC2STR(addr), prev_psk);
+-	if (vlan_id)
+-		*vlan_id = 0;
++	if (vlan_desc)
++		vlan_desc->notempty = 0;
+ 	if (psk_len)
+ 		*psk_len = PMK_LEN;
+ 	if (prev_psk)
+

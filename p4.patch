@@ -1,0 +1,55 @@
+diff --git a/src/radius/radius.c b/src/radius/radius.c
+index 210a0f75e..436c47d44 100644
+--- a/src/radius/radius.c
++++ b/src/radius/radius.c
+@@ -1470,6 +1470,11 @@  int radius_msg_get_vlanid(struct radius_msg *msg, int *untagged, int numtagged,
+ 		tagged[j] = 0;
+ 	*untagged = 0;
+ 
++	if (tag_is_valid(tag))
++		tun = &tunnel[tag];
++	else
++		tun = &tunnel[0];
++
+ 	for (i = 0; i < msg->attr_used; i++) {
+ 		attr = radius_get_attr_hdr(msg, i);
+ 		if (attr->length < sizeof(*attr))
+@@ -1478,10 +1483,8 @@  int radius_msg_get_vlanid(struct radius_msg *msg, int *untagged, int numtagged,
+ 		dlen = attr->length - sizeof(*attr);
+ 		if (attr->length < 3)
+ 			continue;
+-		if (data[0] >= RADIUS_TUNNEL_TAGS)
+-			tun = &tunnel[0];
+-		else
+-			tun = &tunnel[data[0]];
++		if (tag_is_valid(tag) && data[0] != tag)
++			continue;
+ 
+ 		switch (attr->type) {
+ 		case RADIUS_ATTR_TUNNEL_TYPE:
+@@ -1526,19 +1529,11 @@  int radius_msg_get_vlanid(struct radius_msg *msg, int *untagged, int numtagged,
+ 		}
+ 	}
+ 
+-	/* Use tunnel with the lowest tag for untagged VLAN id */
+-	for (i = 0; i < RADIUS_TUNNEL_TAGS; i++) {
+-		tun = &tunnel[i];
+-		if (tag_is_valid(tag) && i != tag)
+-			continue;
+-		if (tun->tag_used &&
+-		    tun->type == RADIUS_TUNNEL_TYPE_VLAN &&
+-		    tun->medium_type == RADIUS_TUNNEL_MEDIUM_TYPE_802 &&
+-		    tun->vlanid > 0) {
+-			*untagged = tun->vlanid;
+-			break;
+-		}
+-	}
++	if (tun->tag_used &&
++	    tun->type == RADIUS_TUNNEL_TYPE_VLAN &&
++	    tun->medium_type == RADIUS_TUNNEL_MEDIUM_TYPE_802 &&
++	    tun->vlanid > 0)
++		*untagged = tun->vlanid;
+ 
+ 	if (taggedidx)
+ 		qsort(tagged, taggedidx, sizeof(int), cmp_int);
+

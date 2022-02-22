@@ -1,0 +1,72 @@
+diff --git a/src/ap/wpa_auth_glue.c b/src/ap/wpa_auth_glue.c
+index f0e94700c..31b570e5c 100644
+--- a/src/ap/wpa_auth_glue.c
++++ b/src/ap/wpa_auth_glue.c
+@@ -334,10 +334,9 @@  static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
+ {
+ 	struct hostapd_data *hapd = ctx;
+ 	struct sta_info *sta = ap_get_sta(hapd, addr);
++	struct vlan_description *vlan = NULL;
+ 	const u8 *psk;
+ 
+-	if (vlan_desc)
+-		vlan_desc->notempty = 0;
+ 	if (psk_len)
+ 		*psk_len = PMK_LEN;
+ 
+@@ -386,6 +385,7 @@  static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
+ 		if (vlan_desc)
+ 			vlan_desc->notempty = 0;
+ 		psk = sta->psk->psk;
++		vlan = &sta->psk->vlan;
+ 		for (pos = sta->psk; pos; pos = pos->next) {
+ 			if (pos->is_passphrase) {
+ 				pbkdf2_sha1(pos->passphrase,
+@@ -396,10 +396,18 @@  static const u8 * hostapd_wpa_auth_get_psk(void *ctx, const u8 *addr,
+ 			}
+ 			if (pos->psk == prev_psk) {
+ 				psk = pos->next ? pos->next->psk : NULL;
++				vlan = pos->next ? &pos->next->vlan : NULL;
+ 				break;
+ 			}
+ 		}
+ 	}
++
++	if (vlan && vlan_desc) {
++		if (vlan && vlan->notempty)
++			*vlan_desc = *vlan;
++		else if (sta->default_radius_vlan.notempty)
++			*vlan_desc = sta->default_radius_vlan;
++	}
+ 	return psk;
+ }
+ 
+@@ -956,16 +964,14 @@  static int hostapd_wpa_auth_update_vlan(void *ctx, const u8 *addr,
+ 
+ 	if (!(hapd->iface->drv_flags & WPA_DRIVER_FLAGS_VLAN_OFFLOAD)) {
+ 		if (!hostapd_vlan_valid(hapd->conf->vlan, vlan_desc)) {
+-			wpa_printf(MSG_INFO,
+-				   "Invalid VLAN ID %d in wpa_psk_file",
+-				   vlan_id);
++			wpa_printf(MSG_INFO, "Invalid VLAN ID %d", vlan_id);
+ 			return -1;
+ 		}
+ 
+ 		if (ap_sta_set_vlan(hapd, sta, vlan_desc) < 0) {
+ 			wpa_printf(MSG_INFO,
+-				   "Failed to assign VLAN ID %d from wpa_psk_file to "
+-				   MACSTR, vlan_id, MAC2STR(sta->addr));
++				   "Failed to assign VLAN ID %d to " MACSTR,
++				   vlan_id, MAC2STR(sta->addr));
+ 			return -1;
+ 		}
+ 	} else {
+@@ -973,7 +979,7 @@  static int hostapd_wpa_auth_update_vlan(void *ctx, const u8 *addr,
+ 	}
+ 
+ 	wpa_printf(MSG_INFO,
+-		   "Assigned VLAN ID %d from wpa_psk_file to " MACSTR,
++		   "Assigned VLAN ID %d from to " MACSTR,
+ 		   vlan_id, MAC2STR(sta->addr));
+ 	if ((sta->flags & WLAN_STA_ASSOC) &&
+ 	    ap_sta_bind_vlan(hapd, sta) < 0)

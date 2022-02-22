@@ -1,0 +1,80 @@
+diff --git a/src/ap/ap_config.h b/src/ap/ap_config.h
+index 38dd77dc5..e961bcd15 100644
+--- a/src/ap/ap_config.h
++++ b/src/ap/ap_config.h
+@@ -152,6 +152,7 @@  struct hostapd_sta_wpa_psk_short {
+ 	u8 psk[PMK_LEN];
+ 	char passphrase[MAX_PASSPHRASE_LEN + 1];
+ 	int ref; /* (number of references held) - 1 */
++	struct vlan_description vlan;
+ 	u8 tag;
+ };
+ 
+diff --git a/src/ap/ieee802_11_auth.c b/src/ap/ieee802_11_auth.c
+index 68fbb5d91..c513cd811 100644
+--- a/src/ap/ieee802_11_auth.c
++++ b/src/ap/ieee802_11_auth.c
+@@ -457,6 +457,8 @@  hostapd_acl_recv_radius(struct radius_msg *msg, struct radius_msg *req,
+ 	struct hostapd_cached_radius_acl *cache;
+ 	struct radius_sta *info;
+ 	struct radius_hdr *hdr = radius_msg_get_hdr(msg);
++	struct hostapd_sta_wpa_psk_short *psk;
++	int vlan_psk_notempty = 1;
+ 
+ 	query = hapd->acl_queries;
+ 	prev = NULL;
+@@ -515,13 +517,25 @@  hostapd_acl_recv_radius(struct radius_msg *msg, struct radius_msg *req,
+ 			info->acct_interim_interval = 0;
+ 		}
+ 
+-		if (hapd->conf->ssid.dynamic_vlan != DYNAMIC_VLAN_DISABLED)
++		decode_tunnel_passwords(hapd, shared_secret, shared_secret_len,
++					msg, req, cache);
++
++		if (hapd->conf->ssid.dynamic_vlan != DYNAMIC_VLAN_DISABLED) {
++			/*
++			 * Fill in the "default" VLAN (in case there is no
++			 * Tunnel* attribute associated with the PSK)
++			 */
+ 			info->vlan_id.notempty = !!radius_msg_get_vlanid(
+ 				msg, &info->vlan_id.untagged,
+ 				MAX_NUM_TAGGED_VLAN, info->vlan_id.tagged, 0);
+-
+-		decode_tunnel_passwords(hapd, shared_secret, shared_secret_len,
+-					msg, req, cache);
++			/* Fill in per PSK VLAN descriptions */
++			for (psk = info->psk; psk; psk = psk->next) {
++				psk->vlan.notempty = !!radius_msg_get_vlanid(
++					msg, &psk->vlan.untagged,
++					MAX_NUM_TAGGED_VLAN, psk->vlan.tagged,
++					psk->tag);
++			}
++		}
+ 
+ 		if (radius_msg_get_attr_ptr(msg, RADIUS_ATTR_USER_NAME,
+ 					    &buf, &len, NULL) == 0) {
+@@ -551,8 +565,22 @@  hostapd_acl_recv_radius(struct radius_msg *msg, struct radius_msg *req,
+ 				       info->vlan_id.tagged[0] ? "+" : "");
+ 			os_memset(&info->vlan_id, 0, sizeof(info->vlan_id));
+ 		}
++		for (psk = info->psk; psk; psk = psk->next) {
++			if (psk->vlan.notempty &&
++			    !hostapd_vlan_valid(hapd->conf->vlan, &psk->vlan)) {
++				hostapd_logger(hapd, query->addr,
++					       HOSTAPD_MODULE_RADIUS,
++					       HOSTAPD_LEVEL_INFO,
++					       "Invalid VLAN %d%s received from RADIUS server",
++					       psk->vlan.untagged,
++					       psk->vlan.tagged[0] ? "+" : "");
++				os_memset(&psk->vlan, 0, sizeof(psk->vlan));
++			}
++			vlan_psk_notempty &= psk->vlan.notempty;
++		}
++
+ 		if (hapd->conf->ssid.dynamic_vlan == DYNAMIC_VLAN_REQUIRED &&
+-		    !info->vlan_id.notempty)
++		    !info->vlan_id.notempty && !vlan_psk_notempty)
+ 			cache->accepted = HOSTAPD_ACL_REJECT;
+ 	} else
+ 		cache->accepted = HOSTAPD_ACL_REJECT;
+

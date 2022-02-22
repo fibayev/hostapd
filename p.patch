@@ -1,0 +1,144 @@
+diff --git a/src/ap/ap_config.h b/src/ap/ap_config.h
+index 3ba368987..edd21516b 100644
+--- a/src/ap/ap_config.h
++++ b/src/ap/ap_config.h
+@@ -152,6 +152,7 @@  struct hostapd_sta_wpa_psk_short {
+ 	u8 psk[PMK_LEN];
+ 	char passphrase[MAX_PASSPHRASE_LEN + 1];
+ 	int ref; /* (number of references held) - 1 */
++	u8 tag;
+ };
+ 
+ struct hostapd_wpa_psk {
+diff --git a/src/ap/ieee802_11_auth.c b/src/ap/ieee802_11_auth.c
+index 783ee6dea..68fbb5d91 100644
+--- a/src/ap/ieee802_11_auth.c
++++ b/src/ap/ieee802_11_auth.c
+@@ -380,6 +380,7 @@  static void decode_tunnel_passwords(struct hostapd_data *hapd,
+ 	char *passphrase;
+ 	size_t i;
+ 	struct hostapd_sta_wpa_psk_short *psk;
++	u8 tag = 0;
+ 
+ 	/*
+ 	 * Decode all tunnel passwords as PSK and save them into a linked list.
+@@ -387,7 +388,7 @@  static void decode_tunnel_passwords(struct hostapd_data *hapd,
+ 	for (i = 0; ; i++) {
+ 		passphrase = radius_msg_get_tunnel_password(
+ 			msg, &passphraselen, shared_secret, shared_secret_len,
+-			req, i);
++			req, i, &tag);
+ 		/*
+ 		 * Passphrase is NULL iff there is no i-th Tunnel-Password
+ 		 * attribute in msg.
+@@ -424,6 +425,7 @@  static void decode_tunnel_passwords(struct hostapd_data *hapd,
+ 				psk->is_passphrase = 1;
+ 			}
+ 			psk->next = cache->info.psk;
++			psk->tag = tag;
+ 			cache->info.psk = psk;
+ 			psk = NULL;
+ 		}
+@@ -516,7 +518,7 @@  hostapd_acl_recv_radius(struct radius_msg *msg, struct radius_msg *req,
+ 		if (hapd->conf->ssid.dynamic_vlan != DYNAMIC_VLAN_DISABLED)
+ 			info->vlan_id.notempty = !!radius_msg_get_vlanid(
+ 				msg, &info->vlan_id.untagged,
+-				MAX_NUM_TAGGED_VLAN, info->vlan_id.tagged);
++				MAX_NUM_TAGGED_VLAN, info->vlan_id.tagged, 0);
+ 
+ 		decode_tunnel_passwords(hapd, shared_secret, shared_secret_len,
+ 					msg, req, cache);
+diff --git a/src/ap/ieee802_1x.c b/src/ap/ieee802_1x.c
+index 753c88335..df8d3c260 100644
+--- a/src/ap/ieee802_1x.c
++++ b/src/ap/ieee802_1x.c
+@@ -1876,7 +1876,7 @@  static int ieee802_1x_update_vlan(struct radius_msg *msg,
+ 	os_memset(&vlan_desc, 0, sizeof(vlan_desc));
+ 	vlan_desc.notempty = !!radius_msg_get_vlanid(msg, &vlan_desc.untagged,
+ 						     MAX_NUM_TAGGED_VLAN,
+-						     vlan_desc.tagged);
++						     vlan_desc.tagged, 0);
+ 
+ 	if (vlan_desc.notempty &&
+ 	    !hostapd_vlan_valid(hapd->conf->vlan, &vlan_desc)) {
+diff --git a/src/radius/radius.c b/src/radius/radius.c
+index be16e27b9..210a0f75e 100644
+--- a/src/radius/radius.c
++++ b/src/radius/radius.c
+@@ -1437,6 +1437,11 @@  static int cmp_int(const void *a, const void *b)
+ }
+ 
+ 
++static int tag_is_valid(u8 tag) {
++	return 0x1 <= tag && tag <= 0x1F;
++}
++
++
+ /**
+  * radius_msg_get_vlanid - Parse RADIUS attributes for VLAN tunnel information
+  * The k tagged vlans found are sorted by vlan_id and stored in the first k
+@@ -1450,7 +1455,7 @@  static int cmp_int(const void *a, const void *b)
+  * Returns: 0 if neither tagged nor untagged configuration is found, 1 otherwise
+  */
+ int radius_msg_get_vlanid(struct radius_msg *msg, int *untagged, int numtagged,
+-			  int *tagged)
++			  int *tagged, u8 tag)
+ {
+ 	struct radius_tunnel_attrs tunnel[RADIUS_TUNNEL_TAGS], *tun;
+ 	size_t i;
+@@ -1524,6 +1529,8 @@  int radius_msg_get_vlanid(struct radius_msg *msg, int *untagged, int numtagged,
+ 	/* Use tunnel with the lowest tag for untagged VLAN id */
+ 	for (i = 0; i < RADIUS_TUNNEL_TAGS; i++) {
+ 		tun = &tunnel[i];
++		if (tag_is_valid(tag) && i != tag)
++			continue;
+ 		if (tun->tag_used &&
+ 		    tun->type == RADIUS_TUNNEL_TYPE_VLAN &&
+ 		    tun->medium_type == RADIUS_TUNNEL_MEDIUM_TYPE_802 &&
+@@ -1554,7 +1561,7 @@  int radius_msg_get_vlanid(struct radius_msg *msg, int *untagged, int numtagged,
+  */
+ char * radius_msg_get_tunnel_password(struct radius_msg *msg, int *keylen,
+ 				      const u8 *secret, size_t secret_len,
+-				      struct radius_msg *sent_msg, size_t n)
++				      struct radius_msg *sent_msg, size_t n, u8 *tag)
+ {
+ 	u8 *buf = NULL;
+ 	size_t buflen;
+@@ -1572,6 +1579,9 @@  char * radius_msg_get_tunnel_password(struct radius_msg *msg, int *keylen,
+ 	size_t fdlen = -1;
+ 	char *ret = NULL;
+ 
++	if (tag)
++		*tag = 0;
++
+ 	/* find n-th valid Tunnel-Password attribute */
+ 	for (i = 0; i < msg->attr_used; i++) {
+ 		attr = radius_get_attr_hdr(msg, i);
+@@ -1589,6 +1599,9 @@  char * radius_msg_get_tunnel_password(struct radius_msg *msg, int *keylen,
+ 		if (j <= n)
+ 			continue;
+ 
++		if (tag_is_valid(data[0]))
++			*tag = data[0];
++
+ 		fdata = data;
+ 		fdlen = dlen;
+ 		break;
+diff --git a/src/radius/radius.h b/src/radius/radius.h
+index fb8148180..70888fc51 100644
+--- a/src/radius/radius.h
++++ b/src/radius/radius.h
+@@ -294,10 +294,11 @@  radius_msg_add_attr_user_password(struct radius_msg *msg,
+ 				  const u8 *secret, size_t secret_len);
+ int radius_msg_get_attr(struct radius_msg *msg, u8 type, u8 *buf, size_t len);
+ int radius_msg_get_vlanid(struct radius_msg *msg, int *untagged, int numtagged,
+-			  int *tagged);
++			  int *tagged, u8 tag);
+ char * radius_msg_get_tunnel_password(struct radius_msg *msg, int *keylen,
+ 				      const u8 *secret, size_t secret_len,
+-				      struct radius_msg *sent_msg, size_t n);
++				      struct radius_msg *sent_msg, size_t n,
++				      u8 *tag);
+ 
+ static inline int radius_msg_add_attr_int32(struct radius_msg *msg, u8 type,
+ 					    u32 value)
