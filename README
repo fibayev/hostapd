@@ -7,10 +7,10 @@ This code support for multiple RADIUS Tunnel-* attributes
 
 Clone this repository and run
 
-```cd hostapd/hostapd
+cd hostapd/hostapd
 
 CFLAGS='-g -Wall -Wextra' make
-```
+
 new binary file will be created in this directory. 
 
 
