@@ -5,6 +5,18 @@ Using patches from https://patchwork.ozlabs.org/project/hostap/list/?series=2663
 This code support for multiple RADIUS Tunnel-* attributes
 
 
+Clone this repository and run
+
+```cd hostapd/hostapd
+
+CFLAGS='-g -Wall -Wextra' make
+```
+new binary file will be created in this directory. 
+
+
+
+
+
 wpa_supplicant and hostapd
 --------------------------
 
